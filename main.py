@@ -5,57 +5,56 @@ from threading import Thread
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
+# Flask server
 app = Flask(__name__)
 @app.route('/')
-def home(): return "Bot is Live!"
+def home(): return "Bot is Online!"
 
 # --- SOZLAMALAR ---
 TOKEN = "8599100876:AAGhk-U0gLCKNUAEf5Q1qThzsaAH-WHYmmA"
-ADMIN_ID = 7257755738
 TMDB_API_KEY = "6ecbd00310e0bb66d4686fae5567a93f"
-video_db = {} # Vaqtinchalik baza
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Salom! Men aqlli kino botman. Kino nomini yozing, men qidirib beraman!")
-
-async def handle_admin_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id == ADMIN_ID and update.message.video:
-        movie_name = update.message.caption
-        if movie_name:
-            video_db[movie_name.lower()] = update.message.video.file_id
-            await update.message.reply_text(f"✅ '{movie_name}' bazaga saqlandi!")
-        else:
-            await update.message.reply_text("⚠️ Videoni yuborganda izohiga (caption) kino nomini yozing!")
+    await update.message.reply_text("Salom! Kino nomini yozing, qidirib beraman.")
 
 async def search_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.message.text.lower()
+    query = update.message.text
     url = f"https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={query}&language=uz-UZ"
-    res = requests.get(url).json()
-
-    if res.get('results'):
-        movie = res['results'][0]
-        title = movie['title']
-        caption = f"🎬 **{title}**\n⭐️ Reyting: {movie['vote_average']}\n\n{movie['overview']}"
-        poster = f"https://image.tmdb.org/t/p/w500{movie['poster_path']}" if movie['poster_path'] else None
-
-        if poster: await update.message.reply_photo(photo=poster, caption=caption, parse_mode='Markdown')
-        else: await update.message.reply_text(caption)
-
-        if title.lower() in video_db:
-            await update.message.reply_video(video=video_db[title.lower()], caption="Mana kino fayli!")
+    
+    try:
+        res = requests.get(url).json()
+        if res.get('results'):
+            movie = res['results'][0]
+            title = movie['title']
+            desc = movie.get('overview', 'Ma'lumot yo'q')
+            poster = movie.get('poster_path')
+            
+            caption = f"🎬 **{title}**\n\n📝 {desc}"
+            
+            if poster:
+                await update.message.reply_photo(photo=f"https://image.tmdb.org/t/p/w500{poster}", caption=caption, parse_mode='Markdown')
+            else:
+                await update.message.reply_text(caption)
         else:
-            await update.message.reply_text("📥 Ma'lumot topildi, lekin video fayli hali yuklanmagan.")
-    else:
-        await update.message.reply_text("🔍 Hech narsa topilmadi.")
+            await update.message.reply_text("🔍 Hech narsa topilmadi.")
+    except Exception as e:
+        await update.message.reply_text("⚠️ Qidiruvda xatolik yuz berdi.")
+
+def run_flask():
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
 
 def main():
-    app_bot = Application.builder().token(TOKEN).build()
-    app_bot.add_handler(CommandHandler("start", start))
-    app_bot.add_handler(MessageHandler(filters.VIDEO, handle_admin_video))
-    app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_movie))
-    Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))).start()
-    app_bot.run_polling()
+    # Botni qurish
+    application = Application.builder().token(TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_movie))
+    
+    # Flaskni alohida oqimda ishga tushirish
+    Thread(target=run_flask).start()
+    
+    # Botni ishga tushirish
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
-    
+            
