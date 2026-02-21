@@ -1,91 +1,77 @@
-import os
-import requests
+import logging
+from aiogram import Bot, Dispatcher, executor, types
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from flask import Flask
 from threading import Thread
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-
-app = Flask(__name__)
-@app.route('/')
-def home(): return "Bot ishlayapti!"
 
 # --- SOZLAMALAR ---
-TOKEN = "8599100876:AAGhk-U0gLCKNUAEf5Q1qThzsaAH-WHYmmA"
-TMDB_API_KEY = "6ecbd00310e0bb66d4686fae5567a93f"
-CHANNEL_ID = -1003873626925  # Sizning kanal ID
-OWNER_ID = 7257755738        # Sizning ID
+API_TOKEN = '8599100876:AAGhk-U0gLCKNUAEf5Q1qThzsaAH-WHYmmA'
+ADMIN_ID = 7257755738
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Asosiy menyu tugmalari
-    buttons = [['🔍 Kino qidirish']]
-    if update.effective_user.id == OWNER_ID:
-        buttons.append(['⚙️ Boshqaruv'])
-    
-    reply_markup = ReplyKeyboardMarkup(buttons, resize_keyboard=True)
-    await update.message.reply_text(
-        "Xush kelibsiz! Kino nomini yozing yoki menyudan foydalaning:",
-        reply_markup=reply_markup
-    )
+# Bazani simulyatsiya qilish (Vaqtinchalik xotira)
+# Real loyihada buni MongoDB yoki SQLite ga ulash tavsiya etiladi
+movies_db = {} 
+users = set()
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    user_id = update.effective_user.id
+# --- UYG'OQ SAQLASH (RENDER UCHUN) ---
+app = Flask('')
+@app.route('/')
+def home(): return "Bot 24/7 holatda ishlamoqda!"
 
-    if text == "⚙️ Boshqaruv" and user_id == OWNER_ID:
-        await update.message.reply_text("🛠 Admin panel: Bu yerda adminlarni boshqarish mumkin.")
-        return
+def run(): app.run(host='0.0.0.0', port=8080)
 
-    if text == "🔍 Kino qidirish":
-        await update.message.reply_text("Kino nomini kiriting...")
-        return
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
 
-    # Kino qidirish jarayoni
-    query = text.strip()
-    url = f"https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={query}&language=uz-UZ"
-    
-    try:
-        res = requests.get(url).json()
-        if res.get('results'):
-            movie = res['results'][0]
-            title = movie['title']
-            desc = movie.get('overview', 'Ma\'lumot yo\'q')
-            poster = movie.get('poster_path')
-            
-            # Kanal ichidan qidirish havolasi
-            clean_id = str(CHANNEL_ID).replace("-100", "")
-            search_url = f"https://t.me/c/{clean_id}/1?q={query.replace(' ', '%20')}"
-            
-            keyboard = [[InlineKeyboardButton("📥 KINONI KO'RISH", url=search_url)]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+# --- BOTNI SOZLASH ---
+logging.basicConfig(level=logging.INFO)
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher(bot)
 
-            caption = f"🎬 **{title}**\n\n📝 {desc[:300]}..."
-            
-            if poster:
-                await update.message.reply_photo(
-                    photo=f"https://image.tmdb.org/t/p/w500{poster}",
-                    caption=caption,
-                    reply_markup=reply_markup,
-                    parse_mode='Markdown'
-                )
-            else:
-                await update.message.reply_text(caption, reply_markup=reply_markup, parse_mode='Markdown')
-        else:
-            await update.message.reply_text("🔍 Kechirasiz, hech narsa topilmadi.")
-    except Exception as e:
-        await update.message.reply_text("⚠️ Qidiruvda xatolik yuz berdi.")
+# Tugmalar
+admin_menu = ReplyKeyboardMarkup(resize_keyboard=True)
+admin_menu.row("📊 Statistika", "✉️ Xabar yuborish")
+admin_menu.row("🎬 Kinolar", "🔐 Kanallar")
+admin_menu.row("👤 Adminlar", "⚙️ Sozlamalar")
+admin_menu.row("⬅️ Orqaga")
 
-def run_flask():
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+@dp.message_handler(commands=['start', 'admin'])
+async def start_command(message: types.Message):
+    users.add(message.from_user.id)
+    if message.from_user.id == ADMIN_ID:
+        await message.answer("Admin paneliga xush kelibsiz!", reply_markup=admin_menu)
+    else:
+        await message.answer(f"Assalomu alaykum {message.from_user.full_name}!\n\n🍿 Kino ko'rish uchun uning kodini yuboring...")
 
-def main():
-    application = Application.builder().token(TOKEN).build()
-    
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    
-    Thread(target=run_flask).start()
-    application.run_polling()
+@dp.message_handler(lambda message: message.text == "📊 Statistika")
+async def show_stats(message: types.Message):
+    if message.from_user.id == ADMIN_ID:
+        await message.answer(f"👥 Bot a'zolari soni: {len(users)}\n🎬 Yuklangan kinolar: {len(movies_db)}")
+
+@dp.message_handler(content_types=['video'])
+async def get_video(message: types.Message):
+    if message.from_user.id == ADMIN_ID:
+        file_id = message.video.file_id
+        await message.answer(f"Kino qabul qilindi. Kod bering:\n(Masalan: 12)")
+        
+        @dp.message_handler(content_types=['text'])
+        async def set_movie_code(msg: types.Message):
+            if msg.from_user.id == ADMIN_ID and msg.text.isdigit():
+                movies_db[msg.text] = file_id
+                await msg.answer(f"✅ Tayyor! Kod: {msg.text}")
+            dp.message_handlers.unregister(set_movie_code) # Jarayonni to'xtatish
+
+@dp.message_handler()
+async def find_movie(message: types.Message):
+    if message.text in movies_db:
+        await bot.send_video(message.chat.id, movies_db[message.text], caption=f"🎬 Kino kodi: {message.text}")
+    elif message.text == "⬅️ Orqaga":
+        await message.answer("Bosh sahifa", reply_markup=types.ReplyKeyboardRemove())
+    elif message.from_user.id != ADMIN_ID:
+        await message.answer("❌ Bunday kodli kino topilmadi.")
 
 if __name__ == '__main__':
-    main()
+    keep_alive()
+    executor.start_polling(dp, skip_updates=True)
     
